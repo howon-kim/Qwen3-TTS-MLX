@@ -1,0 +1,55 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "qwen3-tts-mlx"
+version = "0.1.0"
+description = "Unofficial Apple Silicon MLX implementation of Qwen3-TTS"
+readme = "README.md"
+requires-python = ">=3.10,<3.14"
+license = { text = "Apache-2.0" }
+authors = [{ name = "Howon Kim" }]
+keywords = ["qwen3", "tts", "mlx", "apple-silicon", "voice-cloning"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "License :: OSI Approved :: Apache Software License",
+  "Operating System :: MacOS :: MacOS X",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+]
+dependencies = [
+  "gradio>=5.0,<7",
+  "mlx-audio[tts]==0.5.1",
+  "numpy>=1.26.4",
+  "scipy>=1.10.0",
+  "soundfile>=0.13.1",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0",
+  "ruff>=0.9",
+]
+
+[project.urls]
+Homepage = "https://github.com/howon-kim/Qwen3-TTS-MLX"
+Repository = "https://github.com/howon-kim/Qwen3-TTS-MLX"
+"Upstream Qwen3-TTS" = "https://github.com/QwenLM/Qwen3-TTS"
+
+[project.scripts]
+qwen-tts-mlx = "qwen_tts_mlx.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["qwen_tts_mlx*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

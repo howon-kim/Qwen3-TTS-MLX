@@ -1,0 +1,17 @@
+Qwen3-TTS-MLX
+Copyright 2026 Howon Kim
+
+This is an independent, unofficial project and is not affiliated with or
+endorsed by Alibaba Cloud or the Qwen team.
+
+The user interface and API compatibility design are derived in part from
+QwenLM/Qwen3-TTS, Copyright 2026 The Alibaba Qwen team, licensed under the
+Apache License 2.0:
+https://github.com/QwenLM/Qwen3-TTS
+
+Inference is provided by MLX-Audio, Copyright Prince Canuma and contributors,
+licensed under the MIT License:
+https://github.com/Blaizzy/mlx-audio
+
+Model weights are downloaded separately from mlx-community on Hugging Face.
+Refer to each model card for its license and usage terms.
