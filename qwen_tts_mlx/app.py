@@ -8,6 +8,7 @@ import gradio as gr
 import numpy as np
 
 from .audio import from_gradio
+from .long_form import save_long_form_bundle, synthesize_long_form
 from .manager import ModelManager
 from .models import LANGUAGES, PRECISIONS, SPEAKERS, ModelKind, resolve_model
 from .profiles import VoiceProfile, load_voice_profile, save_voice_profile
@@ -21,6 +22,22 @@ DISCLAIMER = """
 - 音频由人工智能模型自动生成，仅用于体验与展示。严禁利用本服务生成违法、有害、欺诈、
   侵犯隐私或未经授权的深度伪造内容。用户应自行承担合法使用生成音频的责任。
 """
+
+APP_CSS = """
+.gradio-container {max-width: 1440px !important;}
+.mlx-badge {color: #0a7; font-weight: 700;}
+"""
+
+
+def launch_options() -> dict:
+    """Return visual options accepted by Gradio 6's launch method."""
+
+    return {
+        "theme": gr.themes.Soft(
+            font=[gr.themes.GoogleFont("Source Sans Pro"), "Arial", "sans-serif"]
+        ),
+        "css": APP_CSS,
+    }
 
 
 def _audio_output(wavs: list[np.ndarray], sample_rate: int):
@@ -66,15 +83,7 @@ def build_demo(manager: ModelManager | None = None) -> gr.Blocks:
     """Build the full official-style experience without loading a model yet."""
 
     manager = manager or ModelManager()
-    theme = gr.themes.Soft(
-        font=[gr.themes.GoogleFont("Source Sans Pro"), "Arial", "sans-serif"]
-    )
-    css = """
-    .gradio-container {max-width: 1440px !important;}
-    .mlx-badge {color: #0a7; font-weight: 700;}
-    """
-
-    with gr.Blocks(theme=theme, css=css, title="Qwen3-TTS MLX") as demo:
+    with gr.Blocks(title="Qwen3-TTS MLX") as demo:
         gr.Markdown(
             """
 # Qwen3 TTS MLX Demo
@@ -283,8 +292,14 @@ Model inference runs locally through **MLX-Audio**; checkpoints download from
                                     x_vector_only_mode=bool(xvector),
                                     **_generation_kwargs(*generation),
                                 )
+                                penalty_note = ""
+                                if not xvector and float(generation[-1]) < 1.5:
+                                    penalty_note = (
+                                        " MLX-Audio applies a minimum 1.5 repetition penalty "
+                                        "for transcript cloning."
+                                    )
                                 return _audio_output(wavs, sample_rate), (
-                                    f"Finished. `{spec.model_id}`."
+                                    f"Finished. `{spec.model_id}`.{penalty_note}"
                                 )
                             except Exception as exc:  # noqa: BLE001 - UI boundary reports failures
                                 return None, f"{type(exc).__name__}: {exc}"
@@ -437,6 +452,9 @@ Model inference runs locally through **MLX-Audio**; checkpoints download from
                                 bridge_reference_audio = gr.Audio(
                                     label="Designed Reference (设计的参考音频)", type="numpy"
                                 )
+                                bridge_design_button = gr.Button(
+                                    "1. Design Reference Voice (设计参考音色)", variant="secondary"
+                                )
                             with gr.Column(scale=2):
                                 bridge_target_text = gr.Textbox(
                                     label="Target Text (待合成文本)", lines=5
@@ -446,8 +464,9 @@ Model inference runs locally through **MLX-Audio**; checkpoints download from
                                 )
                                 bridge_size, bridge_precision = _model_controls()
                                 bridge_advanced = _advanced_controls()
-                                bridge_button = gr.Button(
-                                    "Design Voice & Generate (设计并生成)", variant="primary"
+                                bridge_clone_button = gr.Button(
+                                    "2. Generate with Reference (使用参考音色生成)",
+                                    variant="primary",
                                 )
                             with gr.Column(scale=3):
                                 bridge_audio = gr.Audio(
@@ -455,22 +474,18 @@ Model inference runs locally through **MLX-Audio**; checkpoints download from
                                 )
                                 bridge_status = gr.Textbox(label="Status (状态)", lines=4)
 
-                        def run_design_clone(
+                        def run_design_reference(
                             reference_text,
                             instruction,
-                            target_text,
                             language,
-                            size,
                             precision,
                             *generation,
                         ):
                             try:
                                 if not (reference_text or "").strip():
-                                    return None, None, "Reference text is required."
+                                    return None, "Reference text is required."
                                 if not (instruction or "").strip():
-                                    return None, None, "Voice design instruction is required."
-                                if not (target_text or "").strip():
-                                    return None, None, "Target text is required."
+                                    return None, "Voice design instruction is required."
 
                                 kwargs = _generation_kwargs(*generation)
                                 design_spec = resolve_model(
@@ -486,6 +501,31 @@ Model inference runs locally through **MLX-Audio**; checkpoints download from
                                     instruct=instruction.strip(),
                                     **kwargs,
                                 )
+                                return _audio_output(reference_wavs, reference_rate), (
+                                    f"Reference ready. `{design_spec.model_id}`. "
+                                    "You can reuse it for multiple target texts."
+                                )
+                            except Exception as exc:  # noqa: BLE001 - UI boundary reports failures
+                                return None, f"{type(exc).__name__}: {exc}"
+
+                        def run_designed_clone(
+                            reference,
+                            reference_text,
+                            target_text,
+                            language,
+                            size,
+                            precision,
+                            *generation,
+                        ):
+                            try:
+                                audio = from_gradio(reference)
+                                if audio is None:
+                                    return None, "Create or upload a designed reference first."
+                                if not (reference_text or "").strip():
+                                    return None, "Reference text is required."
+                                if not (target_text or "").strip():
+                                    return None, "Target text is required."
+                                kwargs = _generation_kwargs(*generation)
                                 base_spec = resolve_model(ModelKind.BASE, size, precision)
                                 output_wavs, output_rate = manager.run(
                                     ModelKind.BASE,
@@ -494,35 +534,237 @@ Model inference runs locally through **MLX-Audio**; checkpoints download from
                                     "generate_voice_clone",
                                     text=target_text.strip(),
                                     language=language,
-                                    ref_audio=(reference_wavs[0], reference_rate),
+                                    ref_audio=audio,
                                     ref_text=reference_text.strip(),
                                     x_vector_only_mode=False,
                                     **kwargs,
                                 )
-                                return (
-                                    _audio_output(reference_wavs, reference_rate),
-                                    _audio_output(output_wavs, output_rate),
-                                    (
-                                        "Finished. "
-                                        f"`{design_spec.model_id}` → `{base_spec.model_id}`."
-                                    ),
+                                return _audio_output(output_wavs, output_rate), (
+                                    f"Finished with the reusable reference. `{base_spec.model_id}`."
                                 )
                             except Exception as exc:  # noqa: BLE001 - UI boundary reports failures
-                                return None, None, f"{type(exc).__name__}: {exc}"
+                                return None, f"{type(exc).__name__}: {exc}"
 
-                        bridge_button.click(
-                            run_design_clone,
+                        bridge_design_button.click(
+                            run_design_reference,
                             inputs=[
                                 bridge_reference_text,
                                 bridge_instruction,
+                                bridge_language,
+                                bridge_precision,
+                                *bridge_advanced,
+                            ],
+                            outputs=[bridge_reference_audio, bridge_status],
+                        )
+                        bridge_clone_button.click(
+                            run_designed_clone,
+                            inputs=[
+                                bridge_reference_audio,
+                                bridge_reference_text,
                                 bridge_target_text,
                                 bridge_language,
                                 bridge_size,
                                 bridge_precision,
                                 *bridge_advanced,
                             ],
-                            outputs=[bridge_reference_audio, bridge_audio, bridge_status],
+                            outputs=[bridge_audio, bridge_status],
                         )
+
+            with gr.Tab("Long Form (장문 제작)"):
+                gr.Markdown(
+                    "Split long text at paragraph and sentence boundaries, synthesize each "
+                    "section, and download both the combined audio and a ZIP with every section. "
+                    "For the most consistent character voice, use **Voice Clone**."
+                )
+                with gr.Row():
+                    with gr.Column(scale=3):
+                        long_text = gr.Textbox(
+                            label="Long Text (장문 원고)",
+                            lines=14,
+                            placeholder="Paste multiple paragraphs here (여러 문단을 붙여 넣으세요).",
+                        )
+                        long_workflow = gr.Dropdown(
+                            ["Custom Voice", "Voice Design", "Voice Clone"],
+                            value="Custom Voice",
+                            label="Workflow (생성 방식)",
+                        )
+                        with gr.Row():
+                            long_language = gr.Dropdown(
+                                list(LANGUAGES), value="Auto", label="Language (语种)"
+                            )
+                            long_speaker = gr.Dropdown(
+                                list(SPEAKERS), value="Sohee", label="Speaker (说话人)"
+                            )
+                        long_instruction = gr.Textbox(
+                            label="Instruction / Voice Description",
+                            lines=3,
+                            placeholder=(
+                                "Optional for Custom Voice; required for Voice Design."
+                            ),
+                        )
+                        long_reference = gr.Audio(
+                            label="Reference Audio (Voice Clone only)", type="numpy"
+                        )
+                        long_ref_text = gr.Textbox(
+                            label="Reference Text (Voice Clone only)", lines=3
+                        )
+                        long_xvector = gr.Checkbox(
+                            label="Use x-vector only (Voice Clone)", value=False
+                        )
+                    with gr.Column(scale=2):
+                        long_size, long_precision = _model_controls()
+                        with gr.Row():
+                            long_max_chars = gr.Slider(
+                                80,
+                                1000,
+                                value=500,
+                                step=20,
+                                label="Maximum characters per section",
+                            )
+                            long_pause = gr.Slider(
+                                0,
+                                2000,
+                                value=650,
+                                step=50,
+                                label="Pause between sections (ms)",
+                            )
+                        long_advanced = _advanced_controls()
+                        long_button = gr.Button("Generate Long Form (장문 생성)", variant="primary")
+                    with gr.Column(scale=3):
+                        long_audio = gr.Audio(label="Combined Audio (합본)", type="numpy")
+                        long_bundle = gr.File(label="Sections + Manifest (.zip)")
+                        long_status = gr.Textbox(label="Status (상태)", lines=4)
+
+                def run_long_form(
+                    text,
+                    workflow,
+                    language,
+                    speaker,
+                    instruction,
+                    reference,
+                    ref_text,
+                    xvector,
+                    size,
+                    precision,
+                    max_chars,
+                    pause_ms,
+                    *generation,
+                ):
+                    try:
+                        if not (text or "").strip():
+                            return None, None, "Long-form text is required."
+                        kwargs = _generation_kwargs(*generation)
+                        note = ""
+
+                        if workflow == "Custom Voice":
+                            spec = resolve_model(ModelKind.CUSTOM_VOICE, size, precision)
+
+                            def generate(section):
+                                return manager.run(
+                                    ModelKind.CUSTOM_VOICE,
+                                    size,
+                                    precision,
+                                    "generate_custom_voice",
+                                    text=section,
+                                    language=language,
+                                    speaker=speaker,
+                                    instruct=(instruction or "").strip() or None,
+                                    **kwargs,
+                                )
+
+                            if not spec.instruction_control and (instruction or "").strip():
+                                note = " 0.6B ignores Custom Voice instructions."
+                        elif workflow == "Voice Design":
+                            if not (instruction or "").strip():
+                                return None, None, "Voice Design requires a voice description."
+                            spec = resolve_model(ModelKind.VOICE_DESIGN, "1.7B", precision)
+
+                            def generate(section):
+                                return manager.run(
+                                    ModelKind.VOICE_DESIGN,
+                                    "1.7B",
+                                    precision,
+                                    "generate_voice_design",
+                                    text=section,
+                                    language=language,
+                                    instruct=instruction.strip(),
+                                    **kwargs,
+                                )
+
+                        elif workflow == "Voice Clone":
+                            audio = from_gradio(reference)
+                            if audio is None:
+                                return None, None, "Voice Clone requires reference audio."
+                            if not xvector and not (ref_text or "").strip():
+                                return None, None, (
+                                    "Reference text is required unless x-vector-only mode is enabled."
+                                )
+                            spec = resolve_model(ModelKind.BASE, size, precision)
+                            prompt = manager.run(
+                                ModelKind.BASE,
+                                size,
+                                precision,
+                                "create_voice_clone_prompt",
+                                ref_audio=audio,
+                                ref_text=(ref_text or "").strip() or None,
+                                x_vector_only_mode=bool(xvector),
+                            )
+
+                            def generate(section):
+                                return manager.run(
+                                    ModelKind.BASE,
+                                    size,
+                                    precision,
+                                    "generate_voice_clone",
+                                    text=section,
+                                    language=language,
+                                    voice_clone_prompt=prompt,
+                                    **kwargs,
+                                )
+
+                            if not xvector and float(generation[-1]) < 1.5:
+                                note = " Transcript cloning uses MLX-Audio's minimum 1.5 repetition penalty."
+                        else:
+                            return None, None, f"Unknown workflow: {workflow}"
+
+                        result = synthesize_long_form(
+                            text.strip(),
+                            generate,
+                            max_chars=int(max_chars),
+                            pause_ms=int(pause_ms),
+                        )
+                        bundle = save_long_form_bundle(result)
+                        duration = result.audio.size / result.sample_rate
+                        return (
+                            (result.sample_rate, result.audio),
+                            bundle,
+                            (
+                                f"Finished {len(result.texts)} section(s), {duration:.1f} seconds. "
+                                f"`{spec.model_id}`.{note}"
+                            ),
+                        )
+                    except Exception as exc:  # noqa: BLE001 - UI boundary reports failures
+                        return None, None, f"{type(exc).__name__}: {exc}"
+
+                long_button.click(
+                    run_long_form,
+                    inputs=[
+                        long_text,
+                        long_workflow,
+                        long_language,
+                        long_speaker,
+                        long_instruction,
+                        long_reference,
+                        long_ref_text,
+                        long_xvector,
+                        long_size,
+                        long_precision,
+                        long_max_chars,
+                        long_pause,
+                        *long_advanced,
+                    ],
+                    outputs=[long_audio, long_bundle, long_status],
+                )
 
         with gr.Row():
             unload_button = gr.Button("Unload model / Free MLX memory")

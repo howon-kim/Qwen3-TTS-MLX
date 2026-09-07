@@ -16,15 +16,18 @@ model families and workflows while running converted checkpoints with
 - Voice cloning with reference audio + transcript
 - x-vector-only cloning without a transcript (usually lower similarity/quality)
 - VoiceDesign → Base cloning in one guided workflow
+- Paragraph-aware long-form generation with configurable section length and pauses
+- Combined WAV playback plus a ZIP containing every section and a JSON manifest
 - Safe, portable `.qvoice` reference profiles (ZIP/WAV/JSON; no pickle execution)
+- Official-shaped scalar/list APIs, reusable clone prompts, and streaming iterators
 - BF16 plus 8-bit, 6-bit, 5-bit, and 4-bit MLX checkpoints
 - Lazy model download, one-checkpoint-at-a-time memory management, and advanced
   sampling controls
-- MLX-Audio streaming and native batch generation remain available through the
-  underlying `backend.model` API
+- Native MLX-Audio batching is used when compatible list inputs share a language
 
 The UI mirrors the official Gradio demo's CustomVoice, VoiceDesign, VoiceClone,
-and voice save/load flows. It intentionally does not claim binary compatibility
+and voice save/load flows, then adds a Mac-oriented Long Form workflow. It
+intentionally does not claim binary compatibility
 with the official PyTorch `.pt` clone-prompt files; `.qvoice` is a safer,
 project-specific interchange format.
 
@@ -109,18 +112,62 @@ wavs, sample_rate = tts.generate_voice_clone(
 )
 ```
 
-To use MLX-Audio's streaming or native batched generation directly:
+List inputs return one waveform per text and use native MLX batching when the
+language and reference constraints permit it:
 
 ```python
-for chunk in tts.model.generate_custom_voice(
+wavs, sample_rate = tts.generate_custom_voice(
+    text=["First line.", "Second line."],
+    language="English",
+    speaker=["Ryan", "Aiden"],
+)
+```
+
+Prepare a voice reference once and reuse it across calls:
+
+```python
+prompt = tts.create_voice_clone_prompt(
+    ref_audio="reference.wav",
+    ref_text="The words spoken in the reference recording.",
+)
+wavs, sample_rate = tts.generate_voice_clone(
+    text=["First passage.", "Second passage."],
+    language="English",
+    voice_clone_prompt=prompt,
+)
+```
+
+The streaming facade yields `(numpy.ndarray, sample_rate)` without inserting
+silence between native stream chunks:
+
+```python
+for chunk, sample_rate in tts.stream_custom_voice(
     text="Streaming from MLX.",
     speaker="Ryan",
     language="English",
-    stream=True,
     streaming_interval=0.32,
 ):
-    consume(chunk.audio)
+    consume(chunk, sample_rate)
 ```
+
+Unsupported official generation arguments now raise an explicit error instead of
+being silently discarded. `max_new_tokens` is translated to MLX-Audio's
+`max_tokens`. The 0.6B CustomVoice checkpoint ignores instructions because that
+model variant does not support instruction control.
+
+## Long-form generation
+
+Open **Long Form (장문 제작)**, paste the full script, then choose Custom Voice,
+Voice Design, or Voice Clone. The app keeps paragraph boundaries where possible,
+splits oversized paragraphs near punctuation, generates one bounded section at a
+time, and inserts a configurable pause. Voice Clone prepares and reuses the same
+reference for every section; this is the recommended workflow for a consistent
+character voice.
+
+The ZIP output contains `combined.wav`, numbered WAV files under `sections/`, and
+`manifest.json` with the corresponding text. Regular transcript-based cloning in
+MLX-Audio applies an effective minimum repetition penalty of 1.5, which the UI
+reports when a lower value is selected.
 
 ## Differences from the official PyTorch package
 
@@ -129,7 +176,9 @@ for chunk in tts.model.generate_custom_voice(
 | Runtime | MLX/Metal on Apple Silicon instead of PyTorch/CUDA |
 | Weights | Community MLX conversions from Hugging Face |
 | Clone profile | Safe `.qvoice` reference container, not official `.pt` prompt objects |
-| Streaming/batching | Supported by MLX-Audio's native API; the Gradio UI returns a completed clip |
+| Reusable prompt | In-process `VoiceClonePrompt`; not binary-compatible with official prompt files |
+| Streaming/batching | Public facade methods plus native MLX batching where input constraints match |
+| Long text | Paragraph-aware sequential generation with combined and section outputs |
 | Speech tokenizer API | Not wrapped as a standalone public API yet |
 | Platform | macOS + Apple Silicon only |
 
@@ -137,13 +186,19 @@ for chunk in tts.model.generate_custom_voice(
 
 ```bash
 python -m pip install -e '.[dev]' --no-deps
-python -m pip install numpy scipy soundfile pytest ruff
+python -m pip install 'gradio>=6,<7' numpy scipy soundfile pytest ruff
 ruff check .
 pytest
 ```
 
 Unit tests do not download model weights. A real generation run is the integration
-test and requires an Apple Silicon Mac.
+test and requires an Apple Silicon Mac. Enable it explicitly with a CustomVoice
+checkpoint or local model directory:
+
+```bash
+QWEN_MLX_INTEGRATION_MODEL="mlx-community/Qwen3-TTS-12Hz-0.6B-CustomVoice-4bit" \
+  pytest tests/integration/test_real_generation.py -v
+```
 
 ## License and credits
 

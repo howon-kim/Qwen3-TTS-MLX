@@ -20,6 +20,7 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - run: python -m pip install --upgrade pip
       - run: python -m pip install -e . --no-deps
-      - run: python -m pip install numpy scipy soundfile pytest ruff
+      - run: python -m pip install "gradio>=6,<7" numpy scipy soundfile pytest ruff
       - run: ruff check .
       - run: pytest
+      - run: python -c "from qwen_tts_mlx.app import build_demo; assert build_demo().config"

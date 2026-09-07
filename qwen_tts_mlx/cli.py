@@ -21,7 +21,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv=None) -> int:
     args = build_parser().parse_args(argv)
-    from .app import build_demo
+    from .app import build_demo, launch_options
 
     launch_kwargs = {
         "server_name": args.host,
@@ -33,5 +33,6 @@ def main(argv=None) -> int:
         launch_kwargs["ssl_certfile"] = args.ssl_certfile
     if args.ssl_keyfile:
         launch_kwargs["ssl_keyfile"] = args.ssl_keyfile
+    launch_kwargs.update(launch_options())
     build_demo().queue(default_concurrency_limit=1).launch(**launch_kwargs)
     return 0
